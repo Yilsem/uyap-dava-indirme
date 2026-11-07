@@ -26,7 +26,7 @@ Eklenti yalnız `vatandas.uyap.gov.tr` sayfasında, sizin açık oturumunuzla ç
 
 ## Hız
 
-UYAP'ı yormamak için aynı anda en çok 15 evrak iner ve her yeni indirme bir öncekinin başlamasından en az 3 saniye sonra başlar. Bu ayarlar `content.js` dosyasının başında yer alır (`ESZAMANLI`, `BASLATMA_ARASI_MS`).
+Aynı anda en çok 20 evrak iner ve her yeni indirme bir öncekinin başlamasından en az 0,2 saniye sonra başlar. UYAP hata döndürürse aralık kendiliğinden 3 saniyeye kadar açılır, hatalar bitince yeniden kısalır. Sekme arka plandayken de hız düşmez. Bu ayarlar `content.js` dosyasının başında yer alır (`ESZAMANLI`, `BASLATMA_ARASI_MS`, `EN_YAVAS_ARA_MS`).
 
 ## Teknik
 

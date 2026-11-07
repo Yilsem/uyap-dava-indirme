@@ -5,8 +5,9 @@
   if (window.__uyapZipYuklendi) return;
   window.__uyapZipYuklendi = true;
 
-  const ESZAMANLI = 15;
-  const BASLATMA_ARASI_MS = 3000; // iki indirmenin başlaması arasında en az 3 sn
+  const ESZAMANLI = 20;
+  const BASLATMA_ARASI_MS = 200; // iki indirmenin başlaması arasında en az 0,2 sn
+  const EN_YAVAS_ARA_MS = 3000; // UYAP hata verirse aralık bu sınıra kadar kendiliğinden açılır
   const DENEME = 3;
   // UYAP'ın "kaydet" adresi: belgeyi asıl biçimiyle verir. Görüntüleme adresi (view_document_brd)
   // büyük evrakta dosya yerine "evrakın boyutu çok büyük" yazısı döndürüyor (canlı, 7 Kasım 2026).
@@ -194,12 +195,16 @@
     } catch { return true; } // ağ hatası oturum kapandı demek değil
   }
 
-  // Başlatma kapısı: işçiler sıraya girer, her başlatma bir öncekinden en az 3 sn sonra.
+  // Başlatma kapısı: işçiler sıraya girer, her başlatma bir öncekinden en az `ara` ms sonra.
+  // Hata gelince ara iki katına çıkar (en çok 3 sn), başarıda yavaşça 0,2 sn'ye döner.
   let kapi = Promise.resolve();
   let sonBaslatma = 0;
+  let ara = BASLATMA_ARASI_MS;
+  const yavasla = () => { ara = Math.min(EN_YAVAS_ARA_MS, ara * 2); };
+  const hizlan = () => { ara = Math.max(BASLATMA_ARASI_MS, Math.round(ara * 0.9)); };
   function sirayaGir() {
     const sira = kapi.then(async () => {
-      const bekle = sonBaslatma + BASLATMA_ARASI_MS - Date.now();
+      const bekle = sonBaslatma + ara - Date.now();
       if (bekle > 0) await sleep(bekle);
       sonBaslatma = Date.now();
     });
@@ -229,9 +234,11 @@
           const yazi = new TextDecoder("utf-8", { fatal: false }).decode(u8).trim();
           if (/[a-zçğıöşü]{3,}\s+[a-zçğıöşü]{3,}/i.test(yazi)) throw new Error("UYAP mesajı: " + yazi.slice(0, 200));
         }
+        hizlan();
         return { u8, ext };
       } catch (e) {
         sonHata = e.message || String(e);
+        yavasla();
         await sleep(1000 * d);
       }
     }
@@ -257,8 +264,8 @@
     const hatalar = [];
     let sira = 0, biten = 0, aktif = 0;
     const t0 = Date.now();
-    const goster = () => durum(`İndiriliyor: ${biten}/${evraklar.length} · aktif ${aktif} · hata ${hatalar.length} · ${Math.round((Date.now() - t0) / 1000)} sn`);
-    // Havuz: 15 işçi; biri bitince sıradakini alır (başlatmalar 3 sn arayla), eş zamanlı 15 korunur.
+    const goster = () => durum(`İndiriliyor: ${biten}/${evraklar.length} · aktif ${aktif} · hata ${hatalar.length} · ara ${(ara / 1000).toFixed(1)} sn · ${Math.round((Date.now() - t0) / 1000)} sn`);
+    // Havuz: 20 işçi; biri bitince sıradakini alır (başlatmalar 0,2 sn arayla), eş zamanlı 20 korunur.
     // Aynı evrak birden çok klasörde görünür (ör. "Son 20 Evrak"); UYAP'tan bir kez indirilir.
     const onbellek = new Map();
     const isci = async () => {
