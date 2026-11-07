@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "UYAP ZIP İndirici (15 paralel)",
-  "version": "1.1.0",
-  "description": "UYAP Vatandaş'ta açılan davanın tüm evraklarını 15 eş zamanlı (3 sn arayla başlatarak) indirir, UYAP'taki klasör yapısıyla tek ZIP verir.",
+  "version": "1.2.0",
+  "description": "UYAP Vatandaş'taki davalarınızın tüm evraklarını 15 eş zamanlı (3 sn arayla başlatarak) indirir; tek dava ya da tüm davalar, UYAP'taki klasör yapısıyla tek ZIP verir.",
   "host_permissions": ["https://vatandas.uyap.gov.tr/*"],
   "content_scripts": [
     {
@@ -10,7 +10,7 @@
       "js": ["zip.js", "content.js"],
       "run_at": "document_idle",
       "world": "MAIN",
-      "all_frames": true
+      "all_frames": false
     }
   ]
 }
