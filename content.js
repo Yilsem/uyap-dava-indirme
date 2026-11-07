@@ -210,6 +210,13 @@
     return u8[i] === 0x3c; // '<'
   }
 
+  // UYAP'ın genel hata/giriş sayfası mı (belge değil)? Başlıkta ya da gövdede bilinen hata sözleri.
+  function hataSayfasiMi(yazi) {
+    const baslik = (/<title[^>]*>([^<]*)/i.exec(yazi) || [])[1] || "";
+    if (/hata|error|giriş|login|bilişim sistemi/i.test(baslik)) return true;
+    return /beklenmeyen bir hata|bir hata oluştu|yetkiniz bulunma|oturumunuz sonlan|sistem hatası/i.test(yazi);
+  }
+
   let oturumDustu = false;
   // Giriş yapılmışken vatandaş sayfası açılır; oturum düşünce /main/index.jsp'ye yönlenir (canlı, 7 Kasım 2026).
   async function oturumAcikMi() {
@@ -246,12 +253,16 @@
         if (!r.ok) throw new Error("HTTP " + r.status);
         const u8 = new Uint8Array(await r.arrayBuffer());
         if (u8.length === 0) throw new Error("boş yanıt");
+        let ext = uzanti(u8, r.headers.get("content-disposition"));
         if (htmlMi(u8, r.headers.get("content-type"))) {
           // Oturum düştüyse kalan evrakları ve davaları boşuna deneme: her şeyi durdur.
           if (!(await oturumAcikMi())) { oturumDustu = true; iptal = true; throw new Error("UYAP oturumu kapandı"); }
-          throw new Error("UYAP hata sayfası döndü");
+          // Bazı evraklar UYAP'ta zaten HTML belgedir (Vekalet Pulu Makbuzu, 89-1 Haciz İhbarnamesi
+          // Cevabı; canlı, 7 Kasım 2026). Oturum açıksa ve UYAP hata sayfası değilse belge olarak al.
+          const yazi = new TextDecoder("utf-8", { fatal: false }).decode(u8.subarray(0, 4000));
+          if (hataSayfasiMi(yazi)) throw new Error("UYAP hata sayfası döndü");
+          if (ext === "bin" || ext === "udf") ext = "html";
         }
-        const ext = uzanti(u8, r.headers.get("content-disposition"));
         // Tanınmayan küçük yanıt çoğu zaman UYAP'ın düz yazı uyarısıdır, dosya değildir.
         if (ext === "bin" && u8.length < 2048) {
           const yazi = new TextDecoder("utf-8", { fatal: false }).decode(u8).trim();
