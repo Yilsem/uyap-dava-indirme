@@ -102,7 +102,11 @@
   // ---------- ağaç ----------
   const metin = (el) => (el?.textContent || "").replace(/\s+/g, " ").trim();
   // Dava penceresi açıksa ağacı onun Evrak sekmesinde ara; önceki davanın gizli ağacı karışmasın.
-  const agacKoku = () => document.querySelector("#dosya_evrak_bilgileri_tab") || document;
+  // Tıklamalar yalnız evrak ağacının içinde kalsın: sekme yoksa ilk evrakın ağacı (ul.filetree) kök olur.
+  const agacKoku = () =>
+    document.querySelector("#dosya_evrak_bilgileri_tab") ||
+    document.querySelector("[evrak_id]")?.closest("ul.filetree, ul.treeview") ||
+    document.createElement("div");
   const evrakEls = () => [...agacKoku().querySelectorAll("[evrak_id]")];
   const klasorEls = () => [...agacKoku().querySelectorAll("span.folder")];
 
@@ -389,9 +393,15 @@
   }
   // offsetParent sabit konumlu (position:fixed) dava penceresinde hep null; kutu sayısına bak.
   const gorunur = (el) => !!el && el.getClientRects().length > 0;
+  // UYAP'ın açılır penceresi: İptal düğmesi olan bir ONAY penceresinde asla onaylama, İptal'e bas
+  // (icra penceresinde "dosyayı kapatıyorsunuz… devam etmek istiyor musunuz?" çıktı; canlı, 7 Kasım 2026).
+  // Yalnız tek düğmeli bilgi uyarısı ("kayıt bulunamadı" gibi) Tamam ile kapatılır.
   const uyariKapat = () => {
+    const iptalD = document.querySelector("#popup_cancel");
+    if (gorunur(iptalD)) { iptalD.click(); return true; }
+    const kap = document.querySelector("#popup_container");
     const ok = document.querySelector("#popup_ok");
-    if (gorunur(ok)) { ok.click(); return true; }
+    if (gorunur(ok) && !kap?.querySelector("#popup_cancel")) { ok.click(); return true; }
     return false;
   };
   const davaPenceresi = () => document.querySelector("#dosya_goruntule_modal");
@@ -436,8 +446,12 @@
       const p = davaPenceresi();
       const sekme = p.querySelector('a[href="#dosya_evrak_bilgileri_tab"]');
       if (!sekme) throw new Error("Evrak sekmesi yok");
-      // Etkin kalmış sekmeye tıklamak yükleme başlatmaz: önce başka bir sekmeye geç.
-      const baska = [...p.querySelectorAll('a[href^="#dosya_"][href$="_tab"]')].find((a) => a !== sekme && gorunur(a));
+      // Etkin kalmış sekmeye tıklamak yükleme başlatmaz: önce başka bir sekmeye geç. YALNIZ salt
+      // okunur bilgi sekmeleri: "MTS Dosya Kapat", "İcra Takibi Başlat", "Ödeme", "Evrak Gönderme"
+      // gibi işlem sekmelerine asla tıklanmaz.
+      const baska = ["#dosya_ayrinti_bilgileri_tab", "#dosya_taraf_bilgileri_tab"]
+        .map((h) => p.querySelector(`a[href="${h}"]`))
+        .find((a) => a && gorunur(a));
       if (baska) { baska.click(); await sleep(800); }
       sekme.click();
       geldi = await bekle(() => (uyariKapat() ? "uyari" : agacBuDavanin() ? "agac" : null), 20000);
@@ -450,7 +464,10 @@
   function davaPenceresiniKapat() {
     const m = davaPenceresi();
     if (!gorunur(m)) return;
-    const k = [...m.querySelectorAll("button")].find((b) => /Kapat/.test(b.textContent)) || m.querySelector(".close");
+    // Yalnız pencerenin kendi kapatma düğmesi: alt bilgideki tam "Kapat" ya da başlıktaki ×.
+    // "Kapat" geçen ilk düğme ARANMAZ: icra penceresinde MTS sekmesinde "Dosya Kapat" düğmesi var.
+    const alt = [...m.querySelectorAll(".modal-footer button, .modal-footer .btn")].find((b) => b.textContent.trim() === "Kapat");
+    const k = alt || m.querySelector('.modal-header .close, .modal-header [data-dismiss="modal"]');
     k?.click();
   }
 
