@@ -1,0 +1,44 @@
+name: ci
+
+# hook sistemi kur.mjs ekledi (kullanıcı kararı, 6 Kasım 2026): GitHub'a push gelince hook sistemi kodu buraya
+# aktarır; bu iş testleri koşar, sonucu hook sistemine bildirir. Olumsuzsa OpenHands düzeltip birleştirir.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      REPO_URL: ${{ gitea.server_url }}/${{ gitea.repository }}.git
+      REPO_TOKEN: ${{ secrets.GITEA_TOKEN }}
+      SHA: ${{ gitea.sha }}
+      BEFORE: ${{ gitea.event.before }}
+    steps:
+      - name: Push edilen commit'i al
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git init -q . && git remote add origin "${REPO_URL}"
+          git -c "http.extraHeader=Authorization: token ${REPO_TOKEN}" fetch -q --depth 50 origin "${SHA}"
+          git checkout -q --detach FETCH_HEAD
+      - name: Testler
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [ -f scripts/degisen_testler.py ]; then
+            git -c "http.extraHeader=Authorization: token ${REPO_TOKEN}" fetch -q --depth 50 origin "${BEFORE}" 2>/dev/null || true
+            exec python3 scripts/degisen_testler.py --base "${BEFORE}"
+          fi
+          ran=0
+          if [ -f package.json ] && node -e "process.exit(require('./package.json').scripts?.test ? 0 : 1)"; then
+            if [ -f package-lock.json ]; then npm ci; else npm install; fi
+            npm test; ran=1
+          fi
+          if find . -path ./node_modules -prune -o -name 'test_*.py' -print -quit | grep -q .; then
+            if [ -f requirements.txt ]; then python3 -m pip install -q -r requirements.txt; fi
+            if python3 -c 'import pytest' 2>/dev/null; then python3 -m pytest -q; else python3 -m unittest discover -s "$(dirname "$(find . -path ./node_modules -prune -o -name 'test_*.py' -print -quit)")" -v; fi
+            ran=1
+          fi
+          [ "$ran" = 1 ] || echo "Bu depoda koşacak test yok"
