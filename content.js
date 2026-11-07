@@ -124,8 +124,11 @@
   function dosyaBilgi() {
     const db = window.dosya_bilgileri || {};
     if (!db.dosyaId) throw new Error("Açık davanın kimliği bulunamadı (dosya_bilgileri yok)");
-    // yargiTuru 0 (Ceza) geçerli bir değer; "|| 1" ile ezilmemeli.
-    return { dosyaId: db.dosyaId, yargiTuru: db.yargiTuru ?? 1, ad: [db.birimAdi, db.dosyaNo].filter(Boolean).join(" ") };
+    // dosya_bilgileri.yargiTuru boş gelebiliyor (canlı, 7 Kasım 2026); sorgu sayfasındaki seçim esas.
+    // 0 (Ceza) geçerli bir değer; "|| 1" ile ezilmemeli.
+    let yt = db.yargiTuru;
+    if (yt === undefined || yt === null || yt === "") yt = document.querySelector("#yargiTuru")?.value ?? "1";
+    return { dosyaId: db.dosyaId, yargiTuru: yt, ad: [db.birimAdi, db.dosyaNo].filter(Boolean).join(" ") };
   }
 
   function evraklariTopla() {
@@ -312,7 +315,8 @@
     }
     return null;
   }
-  const gorunur = (el) => el && el.offsetParent !== null;
+  // offsetParent sabit konumlu (position:fixed) dava penceresinde hep null; kutu sayısına bak.
+  const gorunur = (el) => !!el && el.getClientRects().length > 0;
   const uyariKapat = () => {
     const ok = document.querySelector("#popup_ok");
     if (gorunur(ok)) { ok.click(); return true; }
@@ -352,12 +356,20 @@
     satirDugmesi(tr).click();
     const yeni = await bekle(() => window.dosya_bilgileri?.dosyaId && window.dosya_bilgileri.dosyaId !== onceki && gorunur(davaPenceresi()), 30000);
     if (!yeni) { uyariKapat(); throw new Error("Dava penceresi açılmadı"); }
-    const sekme = davaPenceresi().querySelector('a[href="#dosya_evrak_bilgileri_tab"]');
-    if (!sekme) throw new Error("Evrak sekmesi yok");
-    sekme.click();
-    // Yeni ağaç yüklendi mi: kök klasör adı bu davanın numarasını içermeli.
-    const no = String(window.dosya_bilgileri.dosyaNo || "");
-    const geldi = await bekle(() => (uyariKapat() ? "uyari" : agacBuDavanin() ? "agac" : null), 45000);
+    // Pencere açılır açılmaz sekmeye tıklanırsa ağaç yüklenmiyor (canlı, ceza davaları); bekle ve
+    // gelmezse sekmeye yeniden tıkla. Yeni ağacın kök klasörü bu davanın numarasını içermeli.
+    await sleep(2500);
+    let geldi = null;
+    for (let d = 0; d < 4 && geldi !== "agac"; d++) {
+      const p = davaPenceresi();
+      const sekme = p.querySelector('a[href="#dosya_evrak_bilgileri_tab"]');
+      if (!sekme) throw new Error("Evrak sekmesi yok");
+      // Etkin kalmış sekmeye tıklamak yükleme başlatmaz: önce başka bir sekmeye geç.
+      const baska = [...p.querySelectorAll('a[href^="#dosya_"][href$="_tab"]')].find((a) => a !== sekme && gorunur(a));
+      if (baska) { baska.click(); await sleep(800); }
+      sekme.click();
+      geldi = await bekle(() => (uyariKapat() ? "uyari" : agacBuDavanin() ? "agac" : null), 20000);
+    }
     if (geldi !== "agac") throw new Error("Evrak ağacı yüklenmedi");
     await durulmayiBekle();
     return await davayiIndir();
@@ -380,6 +392,7 @@
     calisiyor = true; toplu = true; iptal = false; oturumDustu = false; dugmeler(true);
     const biten = new Set(sakla.al(BITEN_ANAHTAR, []));
     const rapor = [];
+    window.__uzRapor = rapor; // çalışırken de okunabilsin
     try {
       const turler = [...sec.options].map((o) => ({ deger: o.value, ad: o.text.trim() }));
       for (const tur of turler) {
