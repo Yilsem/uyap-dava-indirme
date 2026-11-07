@@ -1,4 +1,4 @@
-# UYAP ZIP İndirici
+# UYAP Dava İndirme
 
 UYAP Vatandaş Portalı'ndaki davalarınızın tüm evraklarını, UYAP'ta gördüğünüz klasör yapısıyla tek ZIP dosyası olarak indiren ücretsiz Chrome eklentisi.
 

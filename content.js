@@ -1,4 +1,4 @@
-// UYAP ZIP İndirici: açık davanın evrak ağacını açar, evrakları 15 eş zamanlı indirir,
+// UYAP Dava İndirme: açık davanın evrak ağacını açar, evrakları 15 eş zamanlı indirir,
 // UYAP'taki klasör yapısıyla tek ZIP olarak verir. "Tüm davalarımı indir" her yargı türünü
 // sorgular ve listedeki her davayı sırayla ZIP olarak indirir.
 (() => {
@@ -13,7 +13,20 @@
   const INDIR = "https://vatandas.uyap.gov.tr/main/jsp/download_document_brd.uyap";
   const OTO_ANAHTAR = "uyapZipOtomatik";
   const BITEN_ANAHTAR = "uyapZipBitenDavalar";
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // Chrome arka plandaki sekmenin setTimeout'unu dakikada bire kadar yavaşlatıyor (canlı ölçüm:
+  // sekme arkadayken 3 sn'de bir yerine ~23 sn'de bir evrak). Worker zamanlayıcısı bundan etkilenmez.
+  const sleep = (() => {
+    try {
+      const kod = "onmessage=e=>setTimeout(()=>postMessage(e.data.id),e.data.ms)";
+      const w = new Worker(URL.createObjectURL(new Blob([kod], { type: "text/javascript" })));
+      const bekleyen = new Map();
+      let n = 0;
+      w.onmessage = (e) => { const f = bekleyen.get(e.data); bekleyen.delete(e.data); f && f(); };
+      return (ms) => new Promise((r) => { const id = ++n; bekleyen.set(id, r); w.postMessage({ id, ms }); });
+    } catch {
+      return (ms) => new Promise((r) => setTimeout(r, ms));
+    }
+  })();
 
   let calisiyor = false;
   let toplu = false;
@@ -29,7 +42,7 @@
   const dugme = (id, renk, yazi, ek = "") =>
     `<button id="${id}" style="min-height:44px;padding:0 12px;border:0;border-radius:8px;background:${renk};cursor:pointer;font-weight:600;${ek}">${yazi}</button>`;
   panel.innerHTML =
-    '<div style="font-weight:600;margin-bottom:6px">UYAP ZIP İndirici</div>' +
+    '<div style="font-weight:600;margin-bottom:6px">UYAP Dava İndirme</div>' +
     '<div id="uz-toplu-durum" style="font-size:12px;opacity:.9"></div>' +
     '<div id="uz-durum">Hazır.</div>' +
     '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">' +
