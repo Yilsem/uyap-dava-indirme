@@ -270,11 +270,17 @@
         // Tanınmayan küçük yanıt çoğu zaman UYAP'ın düz yazı uyarısıdır, dosya değildir.
         if (ext === "bin" && u8.length < 2048) {
           const yazi = new TextDecoder("utf-8", { fatal: false }).decode(u8).trim();
-          if (/[a-zçğıöşü]{3,}\s+[a-zçğıöşü]{3,}/i.test(yazi)) throw new Error("UYAP mesajı: " + yazi.slice(0, 200));
+          if (/[a-zçğıöşü]{3,}\s+[a-zçğıöşü]{3,}/i.test(yazi)) {
+            const h = new Error("UYAP mesajı: " + yazi.slice(0, 200));
+            // "Evrak UYAP sistemine yüklenmemiş": evrak UYAP'ta yok; tekrar denemek boşuna, hata da değil.
+            if (/yüklenmemiş/i.test(yazi)) h.uyaptaYok = true;
+            throw h;
+          }
         }
         hizlan();
         return { u8, ext };
       } catch (e) {
+        if (e.uyaptaYok) throw e; // UYAP'ta olmayan evrak: yeniden deneme, yavaşlama yok
         sonHata = e.message || String(e);
         yavasla();
         await sleep(1000 * d);
@@ -300,6 +306,7 @@
     if (!evraklar.length) return { evrak: 0, hata: 0, sn: 0, bos: true };
     const girdiler = new Array(evraklar.length);
     const hatalar = [];
+    const uyaptaYok = []; // UYAP "evrak sisteme yüklenmemiş" diyor: indirilecek dosya yok, hata değil
     let sira = 0, biten = 0, aktif = 0;
     const t0 = Date.now();
     const goster = () => durum(`İndiriliyor: ${biten}/${evraklar.length} · aktif ${aktif} · hata ${hatalar.length} · ara ${(ara / 1000).toFixed(1)} sn · ${Math.round((Date.now() - t0) / 1000)} sn`);
@@ -332,7 +339,7 @@
           const { u8, ext } = await onbellek.get(ev.id);
           girdiler[i] = { ev, u8, ext };
         } catch (e) {
-          hatalar.push(`${[...ev.yol, ev.ad].join(" / ")}  [evrakId=${ev.id}]  ${e.message}`);
+          (e.uyaptaYok ? uyaptaYok : hatalar).push(`${[...ev.yol, ev.ad].join(" / ")}  [evrakId=${ev.id}]  ${e.message}`);
         }
         aktif--; biten++; goster();
       }
@@ -355,10 +362,12 @@
       kullanilan.add(aday.toLowerCase());
       zipGirdi.push({ path: aday, data: g.u8 });
     }
+    const notlar = zipGirdi.length;
     if (hatalar.length) zipGirdi.push({ path: "_INDIRILEMEYENLER.txt", data: new TextEncoder().encode(hatalar.join("\r\n")) });
+    if (uyaptaYok.length) zipGirdi.push({ path: "_UYAPTA_OLMAYAN_EVRAKLAR.txt", data: new TextEncoder().encode("Bu evraklar ağaçta görünüyor ama UYAP \"Evrak UYAP sistemine yüklenmemiş\" diyor:\r\n\r\n" + uyaptaYok.join("\r\n")) });
     const kok = evraklar[0].yol[0] || did.ad || "UYAP_Dava";
     zipIndir(window.UyapZip.makeZip(zipGirdi), temizAd(kok) + ".zip");
-    const sonuc = { evrak: zipGirdi.length - (hatalar.length ? 1 : 0), hata: hatalar.length, sn: Math.round((Date.now() - t0) / 1000) };
+    const sonuc = { evrak: notlar, hata: hatalar.length, yok: uyaptaYok.length, sn: Math.round((Date.now() - t0) / 1000) };
     window.__uzSonuc = { ...sonuc, ad: kok, hatalar };
     durum(`Bitti: ${sonuc.evrak} evrak, ${sonuc.hata} hata, ${sonuc.sn} sn. ZIP indirildi.`);
     return sonuc;
@@ -445,7 +454,8 @@
     for (let d = 0; d < 4 && geldi !== "agac"; d++) {
       const p = davaPenceresi();
       const sekme = p.querySelector('a[href="#dosya_evrak_bilgileri_tab"]');
-      if (!sekme) throw new Error("Evrak sekmesi yok");
+      // Bazı dosyalarda (ör. "karşı taraf" olunan değişik iş) UYAP Evrak sekmesini hiç göstermiyor.
+      if (!sekme || !gorunur(sekme)) return { evrak: 0, hata: 0, sn: 0, bos: true, evrakSekmesiYok: true };
       // Etkin kalmış sekmeye tıklamak yükleme başlatmaz: önce başka bir sekmeye geç. YALNIZ salt
       // okunur bilgi sekmeleri: "MTS Dosya Kapat", "İcra Takibi Başlat", "Ödeme", "Evrak Gönderme"
       // gibi işlem sekmelerine asla tıklanmaz.
@@ -497,7 +507,7 @@
           if (biten.has(anahtar)) { rapor.push(`ATLANDI (önceden indirildi)  ${tur.ad}  ${ad}`); continue; }
           try {
             const s = await davaAcVeIndir(tr);
-            rapor.push(`${s.bos ? "EVRAK YOK" : s.hata ? "EKSİK" : "TAMAM"}  ${tur.ad}  ${ad}  evrak=${s.evrak} hata=${s.hata} ${s.sn}sn`);
+            rapor.push(`${s.evrakSekmesiYok ? "EVRAK GÖRME YETKİSİ YOK" : s.bos ? "EVRAK YOK" : s.hata ? "EKSİK" : "TAMAM"}  ${tur.ad}  ${ad}  evrak=${s.evrak} hata=${s.hata}${s.yok ? ` uyaptaYok=${s.yok}` : ""} ${s.sn}sn`);
             if (!s.hata) { biten.add(anahtar); sakla.koy(BITEN_ANAHTAR, [...biten]); }
           } catch (e) {
             rapor.push(`HATA  ${tur.ad}  ${ad}  ${e.message}`);
@@ -513,8 +523,9 @@
     } finally {
       window.__uzRapor = rapor;
       zipIndir(new Blob([rapor.join("\r\n")], { type: "text/plain;charset=utf-8" }), "UYAP_indirme_raporu.txt");
-      const tamam = rapor.filter((r) => r.startsWith("TAMAM")).length;
-      topluDurum(`${oturumDustu ? "Oturum kapandı, durdu" : iptal ? "Durduruldu" : "Bitti"}: ${tamam} dava tam indi, ${rapor.length - tamam} diğer. Rapor indirildi.`);
+      const say = (b) => rapor.filter((r) => r.startsWith(b)).length;
+      const tamam = say("TAMAM"), atlanan = say("ATLANDI"), sorunlu = rapor.length - tamam - atlanan;
+      topluDurum(`${oturumDustu ? "Oturum kapandı, durdu" : iptal ? "Durduruldu" : "Bitti"}: ${tamam} dava indi, ${atlanan} önceden inmişti, ${sorunlu} sorunlu (raporda). Rapor indirildi.`);
       calisiyor = false; toplu = false;
       sonImza = imza();
       dugmeler(false);
