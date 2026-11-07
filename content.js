@@ -1,13 +1,15 @@
-// UYAP Dava İndirme: açık davanın evrak ağacını açar, evrakları 15 eş zamanlı indirir,
+// UYAP Dava İndirme: açık davanın evrak ağacını açar, evrakları eş zamanlı indirir (sayı ve aralık panelden),
 // UYAP'taki klasör yapısıyla tek ZIP olarak verir. "Tüm davalarımı indir" her yargı türünü
 // sorgular ve listedeki her davayı sırayla ZIP olarak indirir.
 (() => {
   if (window.__uyapZipYuklendi) return;
   window.__uyapZipYuklendi = true;
 
-  const ESZAMANLI = 20;
-  const BASLATMA_ARASI_MS = 200; // iki indirmenin başlaması arasında en az 0,2 sn
+  // Varsayılanlar; paneldeki çubuklarla indirme sürerken değiştirilebilir, tarayıcıda hatırlanır.
+  const ESZAMANLI = 20; // aynı anda en çok bu kadar evrak
+  const BASLATMA_ARASI_MS = 200; // iki indirmenin başlaması arasında en az bu kadar ms
   const EN_YAVAS_ARA_MS = 3000; // UYAP hata verirse aralık bu sınıra kadar kendiliğinden açılır
+  const AYAR_ANAHTAR = "uyapZipHiz";
   const DENEME = 3;
   // UYAP'ın "kaydet" adresi: belgeyi asıl biçimiyle verir. Görüntüleme adresi (view_document_brd)
   // büyük evrakta dosya yerine "evrakın boyutu çok büyük" yazısı döndürüyor (canlı, 7 Kasım 2026).
@@ -51,6 +53,10 @@
     dugme("uz-tumu", "#f1c40f", "Tüm davalarımı indir", "color:#320") +
     dugme("uz-iptal", "#e74c3c", "Durdur", "color:#fff;display:none") +
     "</div>" +
+    '<label style="display:block;margin-top:8px;font-size:12px">Aralık: <b id="uz-ara-d"></b> ms' +
+    '<input type="range" id="uz-ara" min="0" max="3000" step="50" style="width:100%;height:28px"></label>' +
+    '<label style="display:block;font-size:12px">Eş zamanlı: <b id="uz-esz-d"></b>' +
+    '<input type="range" id="uz-esz" min="1" max="100" step="1" style="width:100%;height:28px"></label>' +
     '<label style="display:block;margin-top:6px;font-size:12px"><input type="checkbox" id="uz-oto"> Davayı açınca kendiliğinden başla</label>' +
     '<a id="uz-sifirla" href="#" style="display:block;margin-top:4px;font-size:11px;color:#9cf">İndirilmiş davalar listesini sıfırla</a>';
   const ekle = () => document.body && !panel.isConnected && document.body.appendChild(panel);
@@ -62,6 +68,24 @@
     al(k, v) { try { const x = localStorage.getItem(k); return x === null ? v : JSON.parse(x); } catch { return v; } },
     koy(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
   };
+  // Hız ayarı: çubuk değişince hemen geçerli (kapı tabanAra'yı, havuz esz'i her adımda okur).
+  const hiz = sakla.al(AYAR_ANAHTAR, {});
+  let tabanAra = Number.isFinite(hiz.ara) ? hiz.ara : BASLATMA_ARASI_MS;
+  let esz = Number.isFinite(hiz.esz) ? hiz.esz : ESZAMANLI;
+  let ara = tabanAra;
+  let havuzuDurt = () => {}; // çalışan indirme varsa eş zamanlı sayısı artınca yeni işçi açar
+  $("uz-ara").value = tabanAra; $("uz-ara-d").textContent = tabanAra;
+  $("uz-esz").value = esz; $("uz-esz-d").textContent = esz;
+  $("uz-ara").oninput = (e) => {
+    tabanAra = +e.target.value; ara = tabanAra;
+    $("uz-ara-d").textContent = tabanAra; sakla.koy(AYAR_ANAHTAR, { ara: tabanAra, esz });
+  };
+  $("uz-esz").oninput = (e) => {
+    esz = +e.target.value;
+    $("uz-esz-d").textContent = esz; sakla.koy(AYAR_ANAHTAR, { ara: tabanAra, esz });
+    havuzuDurt();
+  };
+
   let oto = sakla.al(OTO_ANAHTAR, true) !== false;
   $("uz-oto").checked = oto;
   $("uz-oto").onchange = (e) => { oto = e.target.checked; sakla.koy(OTO_ANAHTAR, oto); };
@@ -199,9 +223,8 @@
   // Hata gelince ara iki katına çıkar (en çok 3 sn), başarıda yavaşça 0,2 sn'ye döner.
   let kapi = Promise.resolve();
   let sonBaslatma = 0;
-  let ara = BASLATMA_ARASI_MS;
-  const yavasla = () => { ara = Math.min(EN_YAVAS_ARA_MS, ara * 2); };
-  const hizlan = () => { ara = Math.max(BASLATMA_ARASI_MS, Math.round(ara * 0.9)); };
+  const yavasla = () => { ara = Math.min(Math.max(EN_YAVAS_ARA_MS, tabanAra), Math.max(100, ara * 2)); };
+  const hizlan = () => { ara = Math.max(tabanAra, Math.round(ara * 0.9)); };
   function sirayaGir() {
     const sira = kapi.then(async () => {
       const bekle = sonBaslatma + ara - Date.now();
@@ -265,11 +288,27 @@
     let sira = 0, biten = 0, aktif = 0;
     const t0 = Date.now();
     const goster = () => durum(`İndiriliyor: ${biten}/${evraklar.length} · aktif ${aktif} · hata ${hatalar.length} · ara ${(ara / 1000).toFixed(1)} sn · ${Math.round((Date.now() - t0) / 1000)} sn`);
-    // Havuz: 20 işçi; biri bitince sıradakini alır (başlatmalar 0,2 sn arayla), eş zamanlı 20 korunur.
+    // Havuz: `esz` işçi; biri bitince sıradakini alır, başlatmalar kapıdan `ara` ms arayla geçer.
+    // Çubukla esz artarsa havuzuDurt yeni işçi açar, azalırsa fazla işçi elindeki evrakı bitirip çıkar.
     // Aynı evrak birden çok klasörde görünür (ör. "Son 20 Evrak"); UYAP'tan bir kez indirilir.
     const onbellek = new Map();
+    let isciSayisi = 0;
+    let bitti;
+    const tamam = new Promise((r) => (bitti = r));
     const isci = async () => {
-      while (!iptal && sira < evraklar.length) {
+      isciSayisi++;
+      try {
+        while (!iptal && sira < evraklar.length && isciSayisi <= esz) await tekEvrak();
+      } finally {
+        isciSayisi--;
+        if (isciSayisi === 0) (iptal || sira >= evraklar.length ? bitti() : havuzuDurt());
+      }
+    };
+    havuzuDurt = () => {
+      while (!iptal && isciSayisi < esz && isciSayisi < evraklar.length - sira) isci();
+    };
+    const tekEvrak = async () => {
+      {
         const i = sira++;
         const ev = evraklar[i];
         aktif++; goster();
@@ -283,7 +322,9 @@
         aktif--; biten++; goster();
       }
     };
-    await Promise.all(Array.from({ length: Math.min(ESZAMANLI, evraklar.length) }, isci));
+    havuzuDurt();
+    await tamam;
+    havuzuDurt = () => {};
     if (oturumDustu) throw new Error("UYAP oturumu kapandı. Yeniden giriş yapıp tekrar başlatın; inmiş davalar atlanır.");
     if (iptal) throw new Error("Durduruldu");
 
